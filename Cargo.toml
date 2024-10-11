@@ -1,0 +1,43 @@
+[dependencies]
+chrono = "0.4.38"
+clap = "4.5.20"
+crossbeam = "0.8.4"
+minifb = "0.27.0"
+ndarray = "0.16.1"
+num = "0.4.3"
+signalbool = "0.2.5"
+soapysdr = "0.4.0"
+systemstat='0.2.3'
+eframe='0.22.0'
+egui='0.22.0'
+egui-plotter='0.3.0'
+
+[dependencies.bitmap]
+default-features = false
+version = "3.1.3"
+
+[dependencies.plotters]
+default-features = false
+features = [
+    "svg_backend",
+    "ttf",
+    "datetime",
+    "errorbar",
+    "candlestick",
+    "boxplot",
+    "area_series",
+    "line_series",
+    "histogram",
+    "point_series",
+    "evcxr",
+]
+version = "0.3.7"
+
+
+[dependencies.rsdsp]
+path = "../rsdsp"
+
+[package]
+edition = "2021"
+name = "soapy_spec_acc"
+version = "0.1.0"
