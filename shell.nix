@@ -9,7 +9,7 @@ stdenv.mkDerivation rec {
     soapysdr-with-plugins
     pkg-config
     llvm
-    cargo
+    #cargo
     fontconfig.all
     pkg-config
     cairo.all
@@ -24,6 +24,7 @@ stdenv.mkDerivation rec {
   ];
 
   # https://hoverbear.org/blog/rust-bindgen-in-nix/
+  
   LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
   LD_LIBRARY_PATH="${xorg.libXcursor.out}/lib:${xorg.libXrandr.out}/lib:${xorg.libXi.out}/lib:${libGL.out}/lib";
   BINDGEN_EXTRA_CLANG_ARGS =

@@ -3,7 +3,7 @@ chrono = "0.4.38"
 clap = "4.5.20"
 crossbeam = "0.8.4"
 minifb = "0.27.0"
-ndarray = "0.16.1"
+ndarray = {version="0.16.1", features=["rayon"]}
 num = "0.4.3"
 signalbool = "0.2.5"
 soapysdr = "0.4.0"
@@ -11,6 +11,9 @@ systemstat='0.2.3'
 eframe='0.22.0'
 egui='0.22.0'
 egui-plotter='0.3.0'
+rayon='1.10.0'
+image="0.24.9"
+
 
 [dependencies.bitmap]
 default-features = false
