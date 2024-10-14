@@ -1,18 +1,16 @@
 use clap::Parser;
 
-use chrono::prelude::*;
-
 use image::{imageops::FilterType::Nearest, DynamicImage, RgbImage};
-use ndarray::{s, Array1, Array2, Axis};
+use ndarray::{s, Array1, Array2};
 
 //use rayon::prelude::*;
 
 use num::complex::Complex;
-use rsdsp::{ospfb2::Analyzer, windowed_fir::pfb_coeff};
+use soapy_spec_acc::daq::run_daq;
 use soapysdr::{Device, Direction};
 use std::sync::{Arc, Mutex};
 
-use eframe::egui::{self, CentralPanel, Context, Vec2, Visuals};
+use eframe::egui::{self, CentralPanel, Context, Key, Slider, TopBottomPanel, Vec2, Visuals};
 use egui_plotter::EguiBackend;
 use plotters::prelude::*;
 
@@ -72,12 +70,17 @@ struct Args {
     sampling_rate: u32,
 }
 
-#[derive(Clone, Copy)]
-struct PlotSpec {
-    fmin: f64,
-    fmax: f64,
+#[derive(Clone)]
+struct State {
+    freq: f64, 
+    samp_rate: f64,
+    min_ch: usize,
+    max_ch: usize,
+    yscale_min: f64,
+    yscale_max: f64,
     ntime: usize,
     nch: usize,
+    device: Device,
 }
 
 fn db(x: f64) -> f64 {
@@ -95,9 +98,6 @@ fn main() {
 
     let sampling_rate = args.sampling_rate as f64 * 1e6;
     assert_eq!(args.nch & (args.nch - 1), 0);
-
-    let coeff = pfb_coeff::<Ftype>(args.nch / 2, args.ntap, 1.1 as Ftype);
-    let mut pfb = Analyzer::<Complex<Ftype>, Ftype>::new(args.nch, coeff.as_slice().unwrap());
 
     let device = Device::new("driver=airspy").unwrap();
 
@@ -120,61 +120,7 @@ fn main() {
         .unwrap();
 
     device.set_frequency(Direction::Rx, 0, args.f0, ()).unwrap();
-    let mut stream = device.rx_stream::<Complex<Ftype>>(&[0]).unwrap();
-    stream.activate(None).expect("failed to activate stream");
-
-    //let sb = signalbool::SignalBool::new(&[signalbool::Signal::SIGINT], signalbool::Flag::Restart).unwrap();
-
-    //let mut num=12_000_000;
-    //let read_size = min(num as usize, buf.len());
-    let mut num = 0;
-    let mut cnt = 0;
-
-    let t0 = Utc::now().timestamp_millis(); // e.g. `2014-11-28T12:45:59.324310806Z`
-    let (tx_raw, rx_raw) = bounded(64);
-    let (tx_spectrum, rx_spectrum) = bounded(args.n_average * 2);
-    let _th_channelize = std::thread::spawn(move || loop {
-        let data: Vec<Complex<f32>> = rx_raw.recv().unwrap();
-        pfb.analyze_raw_par(&data).axis_iter(Axis(0)).for_each(|x| {
-            let x1 = Array1::from_iter(
-                x.slice(s![args.nch / 2..args.nch])
-                    .iter()
-                    .chain(x.slice(s![0..args.nch / 2]))
-                    .map(|x1| x1.norm_sqr()),
-            );
-            if !tx_spectrum.is_full() {
-                tx_spectrum.send(x1).unwrap();
-            } else {
-                println!("WARNING: spectrum queue is full, skipping");
-            }
-        });
-    });
-
-    let (tx_averaged, rx_averaged) = bounded(16);
-
-    let _th_filter = std::thread::spawn(move || {
-        //let mut filtered_result=Array1::<Ftype>::zeros(NCH);
-        //let mut outfile=File::create("./a.bin").unwrap();
-
-        //let udp = UdpSocket::bind(format!("127.0.0.1:{}", args.tx_port)).unwrap();
-        loop {
-            let mut temp = Array1::<Ftype>::zeros(args.nch);
-            for _i in 0..args.n_average {
-                temp = temp + rx_spectrum.recv().unwrap();
-            }
-            temp /= args.n_average as Ftype;
-
-            //filtered_result=filtered_result*K+temp*(1 as Ftype-K);
-            //send_data(&udp, temp.as_slice().unwrap(), &addr);
-            //write_data(&mut outfile, filtered_result.as_slice().unwrap());
-
-            if !tx_averaged.is_full() && temp.iter().all(|&x| x > 0_f32) {
-                tx_averaged.send(temp).unwrap();
-            } else {
-                println!("average data queue full, skipping");
-            }
-        }
-    });
+    let sdr_stream = device.rx_stream::<Complex<Ftype>>(&[0]).unwrap();
 
     let ctx = Arc::new(Mutex::new(Option::<Context>::default()));
     let ctx1 = Arc::clone(&ctx);
@@ -187,6 +133,9 @@ fn main() {
     let sbuf = spectrum_buf.clone();
 
     let (tx_repaint, rx_repaint) = bounded(1);
+
+    let rx_averaged = run_daq(sdr_stream, args.nch, args.ntap, args.n_average);
+    device.set_frequency(Direction::Rx, 0, args.f0, ()).unwrap();
 
     let _th_display = std::thread::spawn(move || {
         let spectrum_buf = sbuf;
@@ -244,53 +193,29 @@ fn main() {
         }
     });
 
-    let _th_daq = std::thread::spawn(move || {
-        loop {
-            //let mut buf = vec![Complex::<Ftype>::default(); stream.mtu().unwrap()];
-            let mut buf = Vec::with_capacity(stream.mtu().unwrap());
-            buf.resize(stream.mtu().unwrap(), Complex::default());
-            let len = stream
-                .read(&mut [&mut buf], 1_000_000)
-                .expect("read failed");
-            buf.resize(len, Complex::default());
-            if !tx_raw.is_full() {
-                tx_raw.send(buf).unwrap();
-            } else {
-                eprintln!("WARNING: daq queue full, data losting");
-            }
-
-            //pfb.analyze_par(&buf[..len]);
-            cnt += 1;
-            num += len as i64;
-            //println!("{}", num);
-            //println!("{}", len);
-            if cnt % 100 == 0 {
-                let t1 = Utc::now().timestamp_millis();
-                let dt_sec = (t1 - t0) as f64 / 1000.0;
-                let sps = num as f64 / dt_sec;
-                println!("{} Msps {}", sps / 1e6, tx_raw.len());
-            }
-        }
-    });
-
     let ctx1 = Arc::clone(&ctx);
     let mut native_options = eframe::NativeOptions::default();
-    native_options.initial_window_size = Some(Vec2::new(800.0, 600.0));
+    native_options.initial_window_size = Some(Vec2::new(900.0, 600.0));
 
     let wimg = waterfall_img_buf.clone();
     let sbuf = spectrum_buf.clone();
     let fmin = args.f0 - sampling_rate / 2.0;
     let fmax = args.f0 + sampling_rate / 2.0;
-    let plot_spec = PlotSpec {
-        fmin,
-        fmax,
+    let state = State {
+        freq: args.f0,
+        samp_rate: sampling_rate,
+        min_ch: 0,
+        max_ch: args.nch - 1,
+        yscale_max: 1.0,
+        yscale_min: 0.0,
         ntime: args.ntime,
         nch: args.nch,
+        device,
     };
     eframe::run_native(
         "PlotWindow Example",
         native_options,
-        Box::new(move |cc| Box::new(PlotWindow::new(cc, ctx1, wimg, sbuf, plot_spec))),
+        Box::new(move |cc| Box::new(PlotWindow::new(cc, ctx1, wimg, sbuf, state))),
     )
     .unwrap();
     /*
@@ -299,13 +224,13 @@ fn main() {
     th_channelize.join().unwrap();
     th_update_display.join().unwrap();
     */
-    //stream.deactivate(None).expect("failed to deactivate");
+    //sdr_stream.deactivate(None).expect("failed to deactivate");
 }
 
 struct PlotWindow {
     pub waterfall_img: Arc<Mutex<Array2<f32>>>,
     pub spectrum_buf: Arc<Mutex<Array1<f32>>>,
-    pub plot_spec: PlotSpec,
+    pub state: State,
 }
 
 impl PlotWindow {
@@ -314,7 +239,7 @@ impl PlotWindow {
         ctx_holder: Arc<Mutex<Option<Context>>>,
         wimg: Arc<Mutex<Array2<f32>>>,
         sbuf: Arc<Mutex<Array1<f32>>>,
-        plot_spec: PlotSpec,
+        state: State,
     ) -> Self {
         // Disable feathering as it causes artifacts
         let context = &cc.egui_ctx;
@@ -330,13 +255,77 @@ impl PlotWindow {
         Self {
             waterfall_img: wimg,
             spectrum_buf: sbuf,
-            plot_spec,
+            state,
         }
     }
 }
 
 impl eframe::App for PlotWindow {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let (min_value, max_value) =
+            self.waterfall_img
+                .lock()
+                .unwrap().slice(s![..,self.state.min_ch..=self.state.max_ch])
+                .iter()
+                .fold((1e99, -1e99), |a, &v| {
+                    let v = v as f64;
+                    (if a.0 < v { a.0 } else { v }, if a.1 > v { a.1 } else { v })
+                });
+
+        if min_value == max_value {
+            return;
+        }
+
+        TopBottomPanel::bottom("playmenu").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("min ch");
+
+                let mut min_ch = self.state.min_ch;
+                let mut max_ch = self.state.max_ch;
+                if ui
+                    .add(Slider::new(&mut min_ch, 0..=(self.state.nch - 1)))
+                    .changed()
+                {
+                    self.state.min_ch = min_ch;
+                    if self.state.max_ch < self.state.min_ch + 1 {
+                        self.state.max_ch = min_ch + 1;
+                    }
+                }
+
+                ui.label("max ch");
+                if ui
+                    .add(Slider::new(&mut max_ch, 0..=(self.state.nch - 1)))
+                    .changed()
+                {
+                    self.state.max_ch = max_ch;
+                    if self.state.max_ch < self.state.min_ch + 1 {
+                        self.state.min_ch = max_ch - 1;
+                    }
+                }
+
+                ui.label("zoom in");
+                let mut yscale_max = self.state.yscale_max;
+                let mut yscale_min = self.state.yscale_min;
+
+                if ui.add(Slider::new(&mut yscale_min, 0.0..=1.0)).changed() {
+                    self.state.yscale_min = yscale_min;
+                    if self.state.yscale_max - self.state.yscale_min < 0.01 {
+                        self.state.yscale_max = self.state.yscale_min + 0.01;
+                    }
+                }
+
+                if ui.add(Slider::new(&mut yscale_max, 0.0..=1.0)).changed() {
+                    self.state.yscale_max = yscale_max;
+                    //self.state.yscale_min=self.state.yscale_min.max(yscale_max);
+                    if self.state.yscale_max - self.state.yscale_min < 0.01 {
+                        self.state.yscale_min = self.state.yscale_max - 0.01;
+                    }
+                }
+
+                ui.label(format!("F={} MHz", self.state.freq/1e6));
+            })
+        });
+
         CentralPanel::default().show(ctx, |ui| {
             //println!("{}", ".");
             let root_area = EguiBackend::new(ui).into_drawing_area();
@@ -354,19 +343,6 @@ impl eframe::App for PlotWindow {
 
             let (w, h) = upper.dim_in_pixel();
 
-            let (min_value, max_value) =
-                self.waterfall_img
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .fold((1e99, -1e99), |a, &v| {
-                        let v = v as f64;
-                        (if a.0 < v { a.0 } else { v }, if a.1 > v { a.1 } else { v })
-                    });
-
-            if min_value == max_value {
-                return;
-            }
             //println!("{} {}", min_value, max_value);
 
             //let min_value=-100.0;
@@ -388,29 +364,39 @@ impl eframe::App for PlotWindow {
                 })
                 .collect::<Vec<_>>();
 
-            let waterfall = DynamicImage::ImageRgb8(
-                RgbImage::from_vec(self.plot_spec.nch as u32, self.plot_spec.ntime as u32, x)
-                    .unwrap(),
-            )
-            .resize_exact(w, h, Nearest);
+            let df = self.state.samp_rate / self.state.nch as f64;
+            let fmin_raw=self.state.freq-self.state.samp_rate/2.0;
+            let fmax_raw=self.state.freq+self.state.samp_rate/2.0;
+            let fmin_display = self.state.min_ch as f64 * df + fmin_raw;
+            let fmax_display = self.state.max_ch as f64 * df + fmin_raw;
+            let x1 = ((fmin_display - fmin_raw)
+                / self.state.samp_rate
+                * self.state.nch as f64) as u32;
+            let x2 = ((fmax_display - fmin_raw)
+                / self.state.samp_rate
+                * self.state.nch as f64) as u32;
 
-            let bmp: BitMapElement<_> = (
-                (self.plot_spec.fmin, -(self.plot_spec.ntime as f64)),
-                waterfall,
+            let waterfall = DynamicImage::ImageRgb8(
+                RgbImage::from_vec(self.state.nch as u32, self.state.ntime as u32, x).unwrap(),
             )
-                .into();
+            .crop(x1, 0, x2 - x1, self.state.ntime as u32)
+            .resize_exact(w - 15, h - 25, Nearest);
+
+            let bmp: BitMapElement<_> =
+                ((fmin_display, -(self.state.ntime as f64)), waterfall).into();
 
             //let _x_axis = (-3.4f32..3.4).step(0.1);
 
             let mut cc = ChartBuilder::on(&upper)
                 //.margin(1)
-                //.set_label_area_size(LabelAreaPosition::Left, 5)
-                //.set_label_area_size(LabelAreaPosition::Bottom, 5)
-                .set_all_label_area_size(5)
+                .set_label_area_size(LabelAreaPosition::Top, 25)
+                .set_label_area_size(LabelAreaPosition::Left, 5)
+                .set_label_area_size(LabelAreaPosition::Right, 5)
+                //.set_all_label_area_size(5)
                 //.caption("Sine and Cosine", ("sans-serif", 40))
                 .build_cartesian_2d(
-                    (self.plot_spec.fmin / 1e6)..(self.plot_spec.fmax / 1e6),
-                    0.0..(-(self.plot_spec.ntime as f64)),
+                    (fmin_raw / 1e6)..(fmax_raw / 1e6),
+                    0.0..(-(self.state.ntime as f64)),
                 )
                 .unwrap();
 
@@ -420,20 +406,32 @@ impl eframe::App for PlotWindow {
             let spec = self.spectrum_buf.lock().unwrap();
             let (min_value, max_value) = spec
                 .iter()
-                .skip(self.plot_spec.nch / 4)
-                .take(self.plot_spec.nch / 2)
-                .fold((1e99, -1e99), |a, &v| {
+                .enumerate()
+                .filter(|&(ich, _)| {
+                    ich + 10 >= self.state.min_ch && ich <= self.state.max_ch + 10
+                    //true
+                })
+                //.skip(self.state.nch / 4)
+                //.take(self.state.nch / 2)
+                .fold((1e99, -1e99), |a, (_, &v)| {
                     let v = v as f64;
                     (if a.0 < v { a.0 } else { v }, if a.1 > v { a.1 } else { v })
                 });
+            //println!("{} {}", min_value, max_value);
+            let y1 = db(min_value) - 1_f64;
+            let y2 = db(max_value) + 1_f64;
+            //println!("{} {}", min_value, max_value);
+            let ys1 = (y2 - y1) * self.state.yscale_min + y1;
+            let ys2 = (y2 - y1) * self.state.yscale_max + y1;
 
             let mut cc = ChartBuilder::on(&lower)
-                //.set_label_area_size(LabelAreaPosition::Left, 1)
-                //.set_label_area_size(LabelAreaPosition::Bottom, 1)
-                .set_all_label_area_size(5)
+                .set_label_area_size(LabelAreaPosition::Left, 5)
+                .set_label_area_size(LabelAreaPosition::Right, 5)
+                .set_label_area_size(LabelAreaPosition::Bottom, 25)
+                //.set_all_label_area_size(5)
                 .build_cartesian_2d(
-                    (self.plot_spec.fmin / 1e6)..(self.plot_spec.fmax / 1e6),
-                    db(min_value) - 1_f64..db(max_value) + 1_f64,
+                    (fmin_display / 1e6 - 0.1)..(fmax_display / 1e6 + 0.1),
+                    ys1..ys2,
                 )
                 .unwrap();
 
@@ -441,11 +439,11 @@ impl eframe::App for PlotWindow {
 
             cc.configure_mesh().draw().unwrap();
             cc.draw_series(LineSeries::new(
-                (0..self.plot_spec.nch).map(|ich| {
+                (0..self.state.nch).map(|ich| {
                     (
-                        (ich as f64 / self.plot_spec.nch as f64
-                            * (self.plot_spec.fmax - self.plot_spec.fmin)
-                            + self.plot_spec.fmin)
+                        (ich as f64 / self.state.nch as f64
+                            * self.state.samp_rate
+                            + fmin_raw)
                             / 1e6,
                         db(spec[ich] as f64),
                     )
@@ -455,6 +453,32 @@ impl eframe::App for PlotWindow {
             .unwrap();
 
             root_area.present().unwrap();
+            let df = if ctx.input(|input| input.key_pressed(Key::D)) {
+                0.1e6
+            } else if ctx.input(|input| input.key_pressed(Key::S)) {
+                1e6
+            } else if ctx.input(|input| input.key_pressed(Key::A)) {
+                5e6
+            } else if ctx.input(|input| input.key_pressed(Key::C)) {
+                -0.1e6
+            } else if ctx.input(|input| input.key_pressed(Key::X)) {
+                -1e6
+            } else if ctx.input(|input| input.key_pressed(Key::Z)) {
+                -5e6
+            } else {
+                0.0
+            };
+
+            if df != 0.0_f64 {
+                let f = self.state.device.frequency(Direction::Rx, 0).unwrap();
+                self.state
+                    .device
+                    .set_frequency(Direction::Rx, 0, f + df, ())
+                    .unwrap();
+                let f = f + df;
+                self.state.freq=f;
+                println!("freq changed to {}", f);
+            }
         });
     }
 }

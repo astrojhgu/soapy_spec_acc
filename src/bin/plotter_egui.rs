@@ -2,7 +2,8 @@
 //! [eframe](https://docs.rs/eframe/0.22.0/eframe/index.html#usage-native) and
 //! [plotters](https://docs.rs/plotters/0.3.4/plotters/index.html#quick-start)
 
-use eframe::egui::{self, CentralPanel, Visuals, Context};
+use eframe::egui::{self, CentralPanel, Context, Visuals};
+use egui::TopBottomPanel;
 use egui_plotter::EguiBackend;
 use plotters::prelude::*;
 
@@ -36,8 +37,9 @@ impl Simple {
 
 impl eframe::App for Simple {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        
         CentralPanel::default().show(ctx, |ui| {
-            println!("{}",".");
+            println!("{}", ".");
             let root = EguiBackend::new(ui).into_drawing_area();
             root.fill(&WHITE).unwrap();
             let mut chart = ChartBuilder::on(&root)
