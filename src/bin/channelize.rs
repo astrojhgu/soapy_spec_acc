@@ -1,7 +1,7 @@
 use clap::Parser;
 
 use chrono::prelude::*;
-use egui::Vec2;
+
 use image::{imageops::FilterType::Nearest, DynamicImage, RgbImage};
 use ndarray::{s, Array1, Array2, Axis};
 
@@ -12,7 +12,7 @@ use rsdsp::{ospfb2::Analyzer, windowed_fir::pfb_coeff};
 use soapysdr::{Device, Direction};
 use std::sync::{Arc, Mutex};
 
-use eframe::egui::{self, CentralPanel, Context, Visuals};
+use eframe::egui::{self, CentralPanel, Context, Vec2, Visuals};
 use egui_plotter::EguiBackend;
 use plotters::prelude::*;
 
@@ -288,9 +288,9 @@ fn main() {
         nch: args.nch,
     };
     eframe::run_native(
-        "Simple Example",
+        "PlotWindow Example",
         native_options,
-        Box::new(move |cc| Box::new(Simple::new(cc, ctx1, wimg, sbuf, plot_spec))),
+        Box::new(move |cc| Box::new(PlotWindow::new(cc, ctx1, wimg, sbuf, plot_spec))),
     )
     .unwrap();
     /*
@@ -302,13 +302,13 @@ fn main() {
     //stream.deactivate(None).expect("failed to deactivate");
 }
 
-struct Simple {
+struct PlotWindow {
     pub waterfall_img: Arc<Mutex<Array2<f32>>>,
     pub spectrum_buf: Arc<Mutex<Array1<f32>>>,
     pub plot_spec: PlotSpec,
 }
 
-impl Simple {
+impl PlotWindow {
     fn new(
         cc: &eframe::CreationContext<'_>,
         ctx_holder: Arc<Mutex<Option<Context>>>,
@@ -335,7 +335,7 @@ impl Simple {
     }
 }
 
-impl eframe::App for Simple {
+impl eframe::App for PlotWindow {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         CentralPanel::default().show(ctx, |ui| {
             //println!("{}", ".");
