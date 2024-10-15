@@ -8,9 +8,14 @@ use ndarray::{s, Array1, Array2};
 use num::complex::Complex;
 use soapy_spec_acc::daq::run_daq;
 use soapysdr::{Device, Direction};
-use std::sync::{Arc, Mutex};
+use std::{
+    borrow::BorrowMut,
+    sync::{Arc, Mutex},
+};
 
-use eframe::egui::{self, CentralPanel, Context, Key, Slider, TopBottomPanel, Vec2, Visuals};
+use eframe::egui::{
+    self, CentralPanel, Context, Key, Modifiers, Slider, TopBottomPanel, Vec2, Visuals,Label
+};
 use egui_plotter::EguiBackend;
 use plotters::prelude::*;
 
@@ -72,7 +77,7 @@ struct Args {
 
 #[derive(Clone)]
 struct State {
-    freq: f64, 
+    freq: f64,
     samp_rate: f64,
     min_ch: usize,
     max_ch: usize,
@@ -81,6 +86,7 @@ struct State {
     ntime: usize,
     nch: usize,
     device: Device,
+    floor: Option<Array1<f32>>,
 }
 
 fn db(x: f64) -> f64 {
@@ -195,7 +201,8 @@ fn main() {
 
     let ctx1 = Arc::clone(&ctx);
     let mut native_options = eframe::NativeOptions::default();
-    native_options.initial_window_size = Some(Vec2::new(900.0, 600.0));
+    native_options.initial_window_size = Some(Vec2::new(950.0, 600.0));
+    native_options.min_window_size=native_options.initial_window_size.clone();
 
     let wimg = waterfall_img_buf.clone();
     let sbuf = spectrum_buf.clone();
@@ -211,6 +218,7 @@ fn main() {
         ntime: args.ntime,
         nch: args.nch,
         device,
+        floor: None,
     };
     eframe::run_native(
         "PlotWindow Example",
@@ -262,17 +270,18 @@ impl PlotWindow {
 
 impl eframe::App for PlotWindow {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let (min_value, max_value) =
-            self.waterfall_img
-                .lock()
-                .unwrap().slice(s![..,self.state.min_ch..=self.state.max_ch])
-                .iter()
-                .fold((1e99, -1e99), |a, &v| {
-                    let v = v as f64;
-                    (if a.0 < v { a.0 } else { v }, if a.1 > v { a.1 } else { v })
-                });
+        let (min_value, max_value) = self
+            .waterfall_img
+            .lock()
+            .unwrap()
+            .slice(s![.., self.state.min_ch..=self.state.max_ch])
+            .iter()
+            .fold((1e99, -1e99), |a, &v| {
+                let v = v as f64;
+                (if a.0 < v { a.0 } else { v }, if a.1 > v { a.1 } else { v })
+            });
 
-        if min_value == max_value {
+        if min_value == max_value || min_value == 0.0 {
             return;
         }
 
@@ -322,7 +331,14 @@ impl eframe::App for PlotWindow {
                     }
                 }
 
-                ui.label(format!("F={} MHz", self.state.freq/1e6));
+                ui.label(format!("F={} MHz", self.state.freq / 1e6));
+                if ui.button("reset").clicked() {
+                    self.state.floor = None;
+                }
+
+                if ui.button("excl").clicked() {
+                    self.state.floor = Some(self.spectrum_buf.lock().unwrap().clone());
+                }
             })
         });
 
@@ -359,28 +375,26 @@ impl eframe::App for PlotWindow {
                     let v = v as f64;
                     let v = v.max(min_value);
                     let v = v.min(max_value);
-                    let c = colormap.get_color_normalized(v, min_value, max_value);
+                    let c = colormap.get_color_normalized(db(v), db(min_value), db(max_value));
                     [c.0, c.1, c.2]
                 })
                 .collect::<Vec<_>>();
 
             let df = self.state.samp_rate / self.state.nch as f64;
-            let fmin_raw=self.state.freq-self.state.samp_rate/2.0;
-            let fmax_raw=self.state.freq+self.state.samp_rate/2.0;
+            let fmin_raw = self.state.freq - self.state.samp_rate / 2.0;
+            let fmax_raw = self.state.freq + self.state.samp_rate / 2.0;
             let fmin_display = self.state.min_ch as f64 * df + fmin_raw;
             let fmax_display = self.state.max_ch as f64 * df + fmin_raw;
-            let x1 = ((fmin_display - fmin_raw)
-                / self.state.samp_rate
-                * self.state.nch as f64) as u32;
-            let x2 = ((fmax_display - fmin_raw)
-                / self.state.samp_rate
-                * self.state.nch as f64) as u32;
+            let x1 =
+                ((fmin_display - fmin_raw) / self.state.samp_rate * self.state.nch as f64) as u32;
+            let x2 =
+                ((fmax_display - fmin_raw) / self.state.samp_rate * self.state.nch as f64) as u32;
 
             let waterfall = DynamicImage::ImageRgb8(
                 RgbImage::from_vec(self.state.nch as u32, self.state.ntime as u32, x).unwrap(),
             )
             .crop(x1, 0, x2 - x1, self.state.ntime as u32)
-            .resize_exact(w - 15, h - 25, Nearest);
+            .resize_exact(w - 50, h - 25, Nearest);
 
             let bmp: BitMapElement<_> =
                 ((fmin_display, -(self.state.ntime as f64)), waterfall).into();
@@ -388,7 +402,8 @@ impl eframe::App for PlotWindow {
             //let _x_axis = (-3.4f32..3.4).step(0.1);
 
             let mut cc = ChartBuilder::on(&upper)
-                //.margin(1)
+                .margin_left(20)
+                .margin_right(20)
                 .set_label_area_size(LabelAreaPosition::Top, 25)
                 .set_label_area_size(LabelAreaPosition::Left, 5)
                 .set_label_area_size(LabelAreaPosition::Right, 5)
@@ -404,6 +419,11 @@ impl eframe::App for PlotWindow {
             cc.draw_series(std::iter::once(bmp)).unwrap();
 
             let spec = self.spectrum_buf.lock().unwrap();
+            let spec = if let Some(ref x) = self.state.floor {
+                &spec.view() / x
+            } else {
+                spec.to_owned()
+            };
             let (min_value, max_value) = spec
                 .iter()
                 .enumerate()
@@ -418,13 +438,15 @@ impl eframe::App for PlotWindow {
                     (if a.0 < v { a.0 } else { v }, if a.1 > v { a.1 } else { v })
                 });
             //println!("{} {}", min_value, max_value);
-            let y1 = db(min_value) - 1_f64;
-            let y2 = db(max_value) + 1_f64;
+            let y1 = db(min_value) - 0.5_f64;
+            let y2 = db(max_value) + 0.5_f64;
             //println!("{} {}", min_value, max_value);
             let ys1 = (y2 - y1) * self.state.yscale_min + y1;
             let ys2 = (y2 - y1) * self.state.yscale_max + y1;
 
             let mut cc = ChartBuilder::on(&lower)
+                .margin_left(20)
+                .margin_right(20)
                 .set_label_area_size(LabelAreaPosition::Left, 5)
                 .set_label_area_size(LabelAreaPosition::Right, 5)
                 .set_label_area_size(LabelAreaPosition::Bottom, 25)
@@ -441,9 +463,7 @@ impl eframe::App for PlotWindow {
             cc.draw_series(LineSeries::new(
                 (0..self.state.nch).map(|ich| {
                     (
-                        (ich as f64 / self.state.nch as f64
-                            * self.state.samp_rate
-                            + fmin_raw)
+                        (ich as f64 / self.state.nch as f64 * self.state.samp_rate + fmin_raw)
                             / 1e6,
                         db(spec[ich] as f64),
                     )
@@ -453,15 +473,21 @@ impl eframe::App for PlotWindow {
             .unwrap();
 
             root_area.present().unwrap();
-            let df = if ctx.input(|input| input.key_pressed(Key::D)) {
+            let df = if ctx
+                .input(|input| input.key_pressed(Key::D) | input.key_pressed(Key::ArrowUp))
+            {
                 0.1e6
-            } else if ctx.input(|input| input.key_pressed(Key::S)) {
+            } else if ctx.input(|input| input.key_pressed(Key::S) | input.key_pressed(Key::PageUp))
+            {
                 1e6
             } else if ctx.input(|input| input.key_pressed(Key::A)) {
                 5e6
-            } else if ctx.input(|input| input.key_pressed(Key::C)) {
+            } else if ctx.input(|input| input.key_pressed(Key::C) | input.key_pressed(Key::ArrowUp))
+            {
                 -0.1e6
-            } else if ctx.input(|input| input.key_pressed(Key::X)) {
+            } else if ctx
+                .input(|input| input.key_pressed(Key::X) | input.key_pressed(Key::PageDown))
+            {
                 -1e6
             } else if ctx.input(|input| input.key_pressed(Key::Z)) {
                 -5e6
@@ -476,7 +502,8 @@ impl eframe::App for PlotWindow {
                     .set_frequency(Direction::Rx, 0, f + df, ())
                     .unwrap();
                 let f = f + df;
-                self.state.freq=f;
+                self.state.freq = f;
+                self.state.floor = None;
                 println!("freq changed to {}", f);
             }
         });
