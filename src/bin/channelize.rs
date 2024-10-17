@@ -8,13 +8,10 @@ use ndarray::{s, Array1, Array2};
 use num::complex::Complex;
 use soapy_spec_acc::daq::run_daq;
 use soapysdr::{Device, Direction};
-use std::{
-    borrow::BorrowMut,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use eframe::egui::{
-    self, CentralPanel, Context, Key, Modifiers, Slider, TopBottomPanel, Vec2, Visuals,Label
+    self, CentralPanel, Context, Key, Slider, TopBottomPanel, Vec2, Visuals
 };
 use egui_plotter::EguiBackend;
 use plotters::prelude::*;
@@ -206,8 +203,8 @@ fn main() {
 
     let wimg = waterfall_img_buf.clone();
     let sbuf = spectrum_buf.clone();
-    let fmin = args.f0 - sampling_rate / 2.0;
-    let fmax = args.f0 + sampling_rate / 2.0;
+    //let fmin = args.f0 - sampling_rate / 2.0;
+    //let fmax = args.f0 + sampling_rate / 2.0;
     let state = State {
         freq: args.f0,
         samp_rate: sampling_rate,
@@ -282,6 +279,11 @@ impl eframe::App for PlotWindow {
             });
 
         if min_value == max_value || min_value == 0.0 {
+            CentralPanel::default().show(ctx,|ui|{
+                ui.centered_and_justified(|ui|{
+                    ui.label("Awaiting PFB buffer being filled...");
+                });
+            });
             return;
         }
 
