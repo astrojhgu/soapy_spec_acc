@@ -6,13 +6,14 @@ use ndarray::{s, Array1, Array2};
 //use rayon::prelude::*;
 
 use num::complex::Complex;
-use soapy_spec_acc::daq::run_daq;
+use soapy_spec_acc::{daq::run_daq, utils::write_data};
 use soapysdr::{Device, Direction};
-use std::sync::{Arc, Mutex};
-
-use eframe::egui::{
-    self, CentralPanel, Context, Key, Slider, TopBottomPanel, Vec2, Visuals
+use std::{
+    fs::{File, OpenOptions},
+    sync::{Arc, Mutex},
 };
+
+use eframe::egui::{self, CentralPanel, Context, Key, Slider, TopBottomPanel, Vec2, Visuals};
 use egui_plotter::EguiBackend;
 use plotters::prelude::*;
 
@@ -70,6 +71,14 @@ struct Args {
 
     #[clap(short('s'), value_name("sampling rate in MHz"), default_value("6"))]
     sampling_rate: u32,
+
+    #[clap(
+        short('o'),
+        long("out"),
+        value_name("out file name"),
+        //default_value("6")
+    )]
+    outname: Option<String>,
 }
 
 #[derive(Clone)]
@@ -84,6 +93,7 @@ struct State {
     nch: usize,
     device: Device,
     floor: Option<Array1<f32>>,
+    //outname: Option<String>,
 }
 
 fn db(x: f64) -> f64 {
@@ -140,7 +150,16 @@ fn main() {
     let rx_averaged = run_daq(sdr_stream, args.nch, args.ntap, args.n_average);
     device.set_frequency(Direction::Rx, 0, args.f0, ()).unwrap();
 
-    let _th_display = std::thread::spawn(move || {
+    let running=Arc::new(Mutex::new(true));
+    let running1=running.clone();
+    ctrlc::set_handler(move||{
+        println!("bye!");
+        *running1.lock().unwrap()=false;
+    }).unwrap();
+
+
+    let running1=running.clone();
+    let th_display = std::thread::spawn(move || {
         let spectrum_buf = sbuf;
 
         let mut waterfall_buf = Array2::<f32>::zeros((args.ntime, args.nch));
@@ -150,6 +169,14 @@ fn main() {
         let mut filtered_result = Array1::<f32>::zeros(args.nch);
         loop {
             let averaged = rx_averaged.recv().unwrap();
+            if !*running1.lock().unwrap(){
+                return;
+            }
+            if let Some(ref outname) = args.outname {
+                //let mut outfile = File::create(outname).unwrap();
+                let mut outfile=OpenOptions::new().create(true).append(true).open(outname).unwrap();
+                write_data(&mut outfile, averaged.as_slice().unwrap());
+            }
             filtered_result = filtered_result * args.k + &averaged * (1 as Ftype - args.k);
             waterfall_buf_tmp
                 .slice_mut(s![..-1, ..])
@@ -188,8 +215,14 @@ fn main() {
         }
     });
 
+    let running1=running.clone();
     let _th_repaint = std::thread::spawn(move || loop {
-        rx_repaint.recv().unwrap();
+        if  !*running1.lock().unwrap(){
+            return;
+        }
+        if let Err(_)=rx_repaint.recv(){
+            println!("Data source distoryed")
+        }
         let ctx2 = ctx1.lock().unwrap();
         if let Some(ref x) = *ctx2 {
             x.request_repaint();
@@ -199,7 +232,7 @@ fn main() {
     let ctx1 = Arc::clone(&ctx);
     let mut native_options = eframe::NativeOptions::default();
     native_options.initial_window_size = Some(Vec2::new(950.0, 600.0));
-    native_options.min_window_size=native_options.initial_window_size.clone();
+    native_options.min_window_size = native_options.initial_window_size.clone();
 
     let wimg = waterfall_img_buf.clone();
     let sbuf = spectrum_buf.clone();
@@ -216,6 +249,7 @@ fn main() {
         nch: args.nch,
         device,
         floor: None,
+        //outname: args.outname.clone(),
     };
     eframe::run_native(
         "PlotWindow Example",
@@ -223,6 +257,10 @@ fn main() {
         Box::new(move |cc| Box::new(PlotWindow::new(cc, ctx1, wimg, sbuf, state))),
     )
     .unwrap();
+    println!("exit!");
+    *running.lock().unwrap()=false;
+    th_display.join().unwrap();
+
     /*
     th_daq.join().unwrap();
     th_filter.join().unwrap();
@@ -279,8 +317,8 @@ impl eframe::App for PlotWindow {
             });
 
         if min_value == max_value || min_value == 0.0 {
-            CentralPanel::default().show(ctx,|ui|{
-                ui.centered_and_justified(|ui|{
+            CentralPanel::default().show(ctx, |ui| {
+                ui.centered_and_justified(|ui| {
                     ui.label("Awaiting PFB buffer being filled...");
                 });
             });
