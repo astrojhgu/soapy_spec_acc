@@ -252,7 +252,7 @@ fn main() {
         //outname: args.outname.clone(),
     };
     eframe::run_native(
-        "PlotWindow Example",
+        "Waterfall",
         native_options,
         Box::new(move |cc| Box::new(PlotWindow::new(cc, ctx1, wimg, sbuf, state))),
     )

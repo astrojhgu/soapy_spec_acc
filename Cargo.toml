@@ -17,6 +17,8 @@ futures-util="^0.3"
 async-stream = "^0.3"
 tokio={ version="^1",features = ["full"] }
 ctrlc='^3.4'
+binrw='0.14.1'
+tinystr='0.7.6'
 
 [dependencies.bitmap]
 default-features = false
