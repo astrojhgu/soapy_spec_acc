@@ -13,7 +13,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use eframe::egui::{self, CentralPanel, Context, Key, Slider, TopBottomPanel, Vec2, Visuals};
+use eframe::{egui::{self, CentralPanel, Context, Key, Slider, TopBottomPanel, Vec2, Visuals}, Renderer};
 use egui_plotter::EguiBackend;
 use plotters::prelude::*;
 
@@ -79,6 +79,14 @@ struct Args {
         //default_value("6")
     )]
     outname: Option<String>,
+
+    #[clap(
+        short('r'),
+        long("renderer"),
+        value_name("renderer, wgpu or glow"),
+        default_value("glow")
+    )]
+    renderer: String,
 }
 
 #[derive(Clone)]
@@ -150,15 +158,15 @@ fn main() {
     let rx_averaged = run_daq(sdr_stream, args.nch, args.ntap, args.n_average);
     device.set_frequency(Direction::Rx, 0, args.f0, ()).unwrap();
 
-    let running=Arc::new(Mutex::new(true));
-    let running1=running.clone();
-    ctrlc::set_handler(move||{
+    let running = Arc::new(Mutex::new(true));
+    let running1 = running.clone();
+    ctrlc::set_handler(move || {
         println!("bye!");
-        *running1.lock().unwrap()=false;
-    }).unwrap();
+        *running1.lock().unwrap() = false;
+    })
+    .unwrap();
 
-
-    let running1=running.clone();
+    let running1 = running.clone();
     let th_display = std::thread::spawn(move || {
         let spectrum_buf = sbuf;
 
@@ -169,12 +177,16 @@ fn main() {
         let mut filtered_result = Array1::<f32>::zeros(args.nch);
         loop {
             let averaged = rx_averaged.recv().unwrap();
-            if !*running1.lock().unwrap(){
+            if !*running1.lock().unwrap() {
                 return;
             }
             if let Some(ref outname) = args.outname {
                 //let mut outfile = File::create(outname).unwrap();
-                let mut outfile=OpenOptions::new().create(true).append(true).open(outname).unwrap();
+                let mut outfile = OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(outname)
+                    .unwrap();
                 write_data(&mut outfile, averaged.as_slice().unwrap());
             }
             filtered_result = filtered_result * args.k + &averaged * (1 as Ftype - args.k);
@@ -215,12 +227,12 @@ fn main() {
         }
     });
 
-    let running1=running.clone();
+    let running1 = running.clone();
     let _th_repaint = std::thread::spawn(move || loop {
-        if  !*running1.lock().unwrap(){
+        if !*running1.lock().unwrap() {
             return;
         }
-        if let Err(_)=rx_repaint.recv(){
+        if let Err(_) = rx_repaint.recv() {
             println!("Data source distoryed")
         }
         let ctx2 = ctx1.lock().unwrap();
@@ -233,6 +245,11 @@ fn main() {
     let mut native_options = eframe::NativeOptions::default();
     native_options.initial_window_size = Some(Vec2::new(950.0, 600.0));
     native_options.min_window_size = native_options.initial_window_size.clone();
+    native_options.renderer=match args.renderer.as_str(){
+        "glow"=>{Renderer::Glow},
+        "wgpu"=>{Renderer::Wgpu},
+        _=>panic!("renderer can be either wgpu or glow")
+    };
 
     let wimg = waterfall_img_buf.clone();
     let sbuf = spectrum_buf.clone();
@@ -258,7 +275,7 @@ fn main() {
     )
     .unwrap();
     println!("exit!");
-    *running.lock().unwrap()=false;
+    *running.lock().unwrap() = false;
     th_display.join().unwrap();
 
     /*

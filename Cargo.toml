@@ -8,7 +8,7 @@ num = "0.4.3"
 signalbool = "0.2.5"
 soapysdr = "0.4.0"
 systemstat='0.2.3'
-eframe='0.22.0'
+eframe={version = '0.22.0', features = ["wgpu"]}
 egui='0.22.0'
 egui-plotter='0.3.0'
 rayon='1.10.0'
@@ -19,6 +19,7 @@ tokio={ version="^1",features = ["full"] }
 ctrlc='^3.4'
 binrw='0.14.1'
 tinystr='0.7.6'
+#wgpu = { version = "*", features = ["webgpu", "webgl"] }
 
 [dependencies.bitmap]
 default-features = false
