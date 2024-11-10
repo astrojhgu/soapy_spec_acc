@@ -250,6 +250,8 @@ impl Header {
         header.push_item(HeaderItem::IntItem(KvPair::new("nchans", nch as u32)));
         header.push_item(HeaderItem::IntItem(KvPair::new("barycentric", 1 as u32)));
         header.push_item(HeaderItem::IntItem(KvPair::new("nbits", 32)));
+        header.push_item(HeaderItem::DoubleItem(KvPair::new("az_start", 0.0)));
+        header.push_item(HeaderItem::DoubleItem(KvPair::new("za_start", 0.0)));
         header.push_item(HeaderItem::DoubleItem(KvPair::new("tstart", t0)));
         header.push_item(HeaderItem::DoubleItem(KvPair::new("tsamp", tsamp)));
         header.push_item(HeaderItem::DoubleItem(KvPair::new("src_raj", 0.0)));

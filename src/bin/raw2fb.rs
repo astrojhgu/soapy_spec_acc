@@ -2,13 +2,16 @@ use std::io::Read;
 
 use binrw::BinWrite;
 use clap::Parser;
-use soapy_spec_acc::{sigproc_io::Header, utils::{read_data, write_data}};
+use soapy_spec_acc::{
+    sigproc_io::Header,
+    utils::{read_data, write_data},
+};
 
 #[derive(Debug, Parser)]
 #[clap(author, about, version)]
 struct Args {
     #[clap(short('f'), long("freq"), value_name("central freq in Hz"))]
-    f0: f64,
+    f0_Hz: f64,
 
     #[clap(short('n'), long("nch"), value_name("num of channels"))]
     nch: usize,
@@ -16,7 +19,7 @@ struct Args {
     #[clap(
         short('a'),
         value_name("number of time points to calculate mean"),
-        default_value("128")
+        default_value("1")
     )]
     n_average: usize,
 
@@ -42,13 +45,18 @@ struct Args {
 
 pub fn main() -> Result<(), std::io::Error> {
     let args = Args::parse();
-    let fs = args.sampling_rate as f64 * 1e6;
+    let fs_MHz = args.sampling_rate as f64;
+    println!("fs={:e}", fs_MHz);
     let nch = args.nch;
-    let dt = 1.0 / fs / nch as f64 / 2.0;
-    let fc = args.f0;
-    let fch1 = fc + fs / 2.0;
-    let foff = fs / nch as f64;
-    let header = Header::new(fch1, nch, foff, 51544.0, dt);
+    let dt = 1.0 / (fs_MHz * 1e6) * nch as f64 / 2.0 * args.n_average as f64;
+    let foff_MHz = -fs_MHz / nch as f64;
+
+    println!("dt={} us", dt * 1e6);
+    let fc_MHz = args.f0_Hz / 1e6;
+    let fch1_MHz = fc_MHz + fs_MHz / 2.0 + foff_MHz / 2.0;
+    println!("fch1: {} MHz", fch1_MHz);
+
+    let header = Header::new(fch1_MHz, nch, foff_MHz, 51544.0, dt);
     let mut outfile = std::fs::File::create(&args.outname)?;
 
     header.write_le(&mut outfile).unwrap();
@@ -57,8 +65,8 @@ pub fn main() -> Result<(), std::io::Error> {
     let mut buf = vec![0_f32; nch];
     let mut buf1 = vec![0_f32; nch];
     while let Ok(()) = read_data(&mut infile, &mut buf) {
-        buf1.iter_mut().zip(buf.iter().rev()).for_each(|(a,&b)|{
-            *a=b;
+        buf1.iter_mut().zip(buf.iter().rev()).for_each(|(a, &b)| {
+            *a = b;
         });
         write_data(&mut outfile, &buf1);
     }
