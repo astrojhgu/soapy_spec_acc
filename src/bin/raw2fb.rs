@@ -41,6 +41,9 @@ struct Args {
         //default_value("6")
     )]
     outname: String,
+
+    #[clap(long("osr"), value_name("oversampling ratio"), default_value("2"))]
+    osr: usize, 
 }
 
 pub fn main() -> Result<(), std::io::Error> {
@@ -48,7 +51,7 @@ pub fn main() -> Result<(), std::io::Error> {
     let fs_MHz = args.sampling_rate as f64;
     println!("fs={:e}", fs_MHz);
     let nch = args.nch;
-    let dt = 1.0 / (fs_MHz * 1e6) * nch as f64 / 2.0 * args.n_average as f64;
+    let dt = 1.0 / (fs_MHz * 1e6) * nch as f64 / args.osr as f64 * args.n_average as f64;
     let foff_MHz = -fs_MHz / nch as f64;
 
     println!("dt={} us", dt * 1e6);
