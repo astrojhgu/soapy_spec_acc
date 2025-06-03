@@ -1,6 +1,6 @@
 use chrono::Utc;
-use crossbeam::channel::{bounded, Receiver};
-use ndarray::{s, Array1, Axis};
+use crossbeam::channel::{Receiver, bounded};
+use ndarray::{Array1, Axis, s};
 use num::Complex;
 use rsdsp::{ospfb2::Analyzer, windowed_fir::pfb_coeff};
 use soapysdr::RxStream;
@@ -12,12 +12,12 @@ pub fn run_daq(
     nch: usize,
     tap_per_ch: usize,
     n_average: usize,
-) ->Receiver<Array1<f32>> {
-    match sdr_stream
-        .activate(None)
-    {
-        Ok(())=>{println!("activated")}
-        Err(e)=>{
+) -> Receiver<Array1<f32>> {
+    match sdr_stream.activate(None) {
+        Ok(()) => {
+            println!("activated")
+        }
+        Err(e) => {
             println!("{e:?}");
         }
     }
@@ -32,7 +32,7 @@ pub fn run_daq(
 
     std::thread::spawn(move || {
         let t0 = Utc::now().timestamp_millis(); // e.g. `2014-11-28T12:45:59.324310806Z`
-        let mut sigma=None;
+        let mut sigma = None;
         loop {
             //let mut buf = vec![Complex::<Ftype>::default(); stream.mtu().unwrap()];
             let mut buf = Vec::with_capacity(sdr_stream.mtu().unwrap());
@@ -41,18 +41,23 @@ pub fn run_daq(
                 .read(&mut [&mut buf], 1_000_000)
                 .expect("read failed");
             buf.resize(len, Complex::default());
-            let sigma1=buf.iter().map(|x|{
-                x.norm_sqr()
-            }).reduce(|a,b|{a+b}).unwrap()/buf.len() as f32;
-            let k=0.999;
-            if let Some(ref mut x)=sigma{
-                *x=*x*k+(1.0-k)*sigma1;
-            }else{
-                sigma=Some(sigma1);
+            let sigma1 = buf
+                .iter()
+                .map(|x| x.norm_sqr())
+                .reduce(|a, b| a + b)
+                .unwrap()
+                / buf.len() as f32;
+            let k = 0.999;
+            if let Some(ref mut x) = sigma {
+                *x = *x * k + (1.0 - k) * sigma1;
+            } else {
+                sigma = Some(sigma1);
             }
-            
+
             if !tx_raw.is_full() {
-                tx_raw.send(buf).unwrap();
+                if tx_raw.send(buf).is_err() {
+                    break;
+                }
             } else {
                 eprintln!("WARNING: daq queue full, data losting");
             }
@@ -66,28 +71,37 @@ pub fn run_daq(
                 let t1 = Utc::now().timestamp_millis();
                 let dt_sec = (t1 - t0) as f64 / 1000.0;
                 let sps = num as f64 / dt_sec;
-                println!("{} Msps Q={} pwr={} dB", sps / 1e6, tx_raw.len(), sigma.unwrap_or(1e-30).log10()*10.0);
+                println!(
+                    "{} Msps Q={} pwr={} dB",
+                    sps / 1e6,
+                    tx_raw.len(),
+                    sigma.unwrap_or(1e-30).log10() * 10.0
+                );
             }
         }
     });
 
     let (tx_spectrum, rx_spectrum) = bounded(n_average * 2);
 
-    std::thread::spawn(move || loop {
-        let data: Vec<Complex<f32>> = rx_raw.recv().unwrap();
-        pfb.analyze_raw_par(&data).axis_iter(Axis(0)).for_each(|x| {
-            let x1 = Array1::from_iter(
-                x.slice(s![nch / 2..nch])
-                    .iter()
-                    .chain(x.slice(s![0..nch / 2]))
-                    .map(|x1| x1.norm_sqr()),
-            );
-            if !tx_spectrum.is_full() {
-                tx_spectrum.send(x1).unwrap();
-            } else {
-                println!("WARNING: spectrum queue is full, skipping");
-            }
-        });
+    std::thread::spawn(move || {
+        loop {
+            let data: Vec<Complex<f32>> = rx_raw.recv().unwrap();
+            pfb.analyze_raw_par(&data).axis_iter(Axis(0)).for_each(|x| {
+                let x1 = Array1::from_iter(
+                    x.slice(s![nch / 2..nch])
+                        .iter()
+                        .chain(x.slice(s![0..nch / 2]))
+                        .map(|x1| x1.norm_sqr()),
+                );
+                if !tx_spectrum.is_full() {
+                    if tx_spectrum.send(x1).is_err() {
+                        return;
+                    }
+                } else {
+                    println!("WARNING: spectrum queue is full, skipping");
+                }
+            });
+        }
     });
 
     let (tx_averaged, rx_averaged) = bounded(16);
@@ -109,7 +123,9 @@ pub fn run_daq(
             //write_data(&mut outfile, filtered_result.as_slice().unwrap());
 
             if !tx_averaged.is_full() && temp.iter().all(|&x| x > 0_f32) {
-                tx_averaged.send(temp).unwrap();
+                if tx_averaged.send(temp).is_err() {
+                    break;
+                }
             } else {
                 println!("average data queue full, skipping");
             }
