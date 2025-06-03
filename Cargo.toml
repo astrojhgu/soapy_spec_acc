@@ -54,6 +54,6 @@ features = ["full"]
 version = "1.45.1"
 
 [package]
-edition = "2021"
+edition = "2024"
 name = "soapy_spec_acc"
 version = "0.1.0"

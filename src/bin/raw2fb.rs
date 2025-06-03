@@ -1,5 +1,4 @@
-use std::io::Read;
-
+#![allow(non_snake_case)]
 use binrw::BinWrite;
 use clap::Parser;
 use soapy_spec_acc::{
@@ -43,13 +42,13 @@ struct Args {
     outname: String,
 
     #[clap(long("osr"), value_name("oversampling ratio"), default_value("2"))]
-    osr: usize, 
+    osr: usize,
 }
 
 pub fn main() -> Result<(), std::io::Error> {
     let args = Args::parse();
     let fs_MHz = args.sampling_rate as f64;
-    println!("fs={:e}", fs_MHz);
+    println!("fs={fs_MHz:e}");
     let nch = args.nch;
     let dt = 1.0 / (fs_MHz * 1e6) * nch as f64 / args.osr as f64 * args.n_average as f64;
     let foff_MHz = -fs_MHz / nch as f64;
@@ -57,7 +56,7 @@ pub fn main() -> Result<(), std::io::Error> {
     println!("dt={} us", dt * 1e6);
     let fc_MHz = args.f0_Hz / 1e6;
     let fch1_MHz = fc_MHz + fs_MHz / 2.0 + foff_MHz / 2.0;
-    println!("fch1: {} MHz", fch1_MHz);
+    println!("fch1: {fch1_MHz} MHz");
 
     let header = Header::new(fch1_MHz, nch, foff_MHz, 51544.0, dt);
     let mut outfile = std::fs::File::create(&args.outname)?;

@@ -7,21 +7,13 @@ use clap::Parser;
 
 use chrono::prelude::*;
 
-use image::{imageops::FilterType::Nearest, DynamicImage, RgbImage};
-use ndarray::{s, Array1, Array2, Axis};
+use ndarray::{Array1, Axis, s};
 
 //use rayon::prelude::*;
 
 use num::complex::Complex;
 use rsdsp::{ospfb2::Analyzer, windowed_fir::pfb_coeff};
 use soapysdr::{Device, Direction};
-use std::sync::{Arc, Mutex};
-
-use eframe::egui::{self, CentralPanel, Context, Vec2, Visuals};
-use egui_plotter::EguiBackend;
-use plotters::prelude::*;
-
-use crossbeam::channel::bounded;
 
 type Ftype = f32;
 
@@ -77,18 +69,6 @@ struct Args {
     sampling_rate: u32,
 }
 
-#[derive(Clone, Copy)]
-struct PlotSpec {
-    fmin: f64,
-    fmax: f64,
-    ntime: usize,
-    nch: usize,
-}
-
-fn db(x: f64) -> f64 {
-    x.log10() * 10.0
-}
-
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
@@ -107,7 +87,7 @@ async fn main() {
     let device = Device::new("driver=airspy").unwrap();
 
     for g in device.list_gains(Direction::Rx, 0).unwrap() {
-        println!("{}", g);
+        println!("{g}");
     }
 
     device.set_antenna(Direction::Rx, 0, "RX").unwrap();
@@ -156,7 +136,7 @@ async fn main() {
                 }
                 }
                 otherwise =>{
-                    println!("{:?}", otherwise);
+                    println!("{otherwise:?}");
                 }
             }
 
@@ -199,7 +179,7 @@ async fn main() {
 
     pin_mut!(average_stream);
 
-    while let Some(x) = average_stream.next().await {
+    while let Some(_x) = average_stream.next().await {
         //println!("{}", x.len());
     }
 }

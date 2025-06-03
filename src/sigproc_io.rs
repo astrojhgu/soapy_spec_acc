@@ -1,11 +1,9 @@
-use binrw::{binrw, BinRead, BinWrite};
+use binrw::{BinRead, BinWrite, binrw};
 //use crate::pulsar::Pulsar;
 use num::traits::{Float, NumCast};
 
 use core::panic;
 use std::io::{Read, Write};
-
-
 
 #[binrw]
 #[brw(little)]
@@ -27,7 +25,7 @@ impl std::fmt::Debug for SpStr {
 
 impl SpStr {
     pub fn new(c: &str) -> SpStr {
-        let content: Vec<u8> = c.as_bytes().iter().cloned().collect();
+        let content: Vec<u8> = c.as_bytes().to_vec();
         SpStr {
             len: content.len() as u32,
             content,
@@ -87,9 +85,9 @@ impl std::fmt::Debug for HeaderItem {
         match self {
             HeaderStart => "HeaderStart".fmt(fmt),
             HeaderEnd => "HeaderEnd".fmt(fmt),
-            StringItem(ref x) => x.fmt(fmt),
-            IntItem(ref x) => x.fmt(fmt),
-            DoubleItem(ref x) => x.fmt(fmt),
+            StringItem(x) => x.fmt(fmt),
+            IntItem(x) => x.fmt(fmt),
+            DoubleItem(x) => x.fmt(fmt),
         }
     }
 }
@@ -136,11 +134,13 @@ impl BinWrite for HeaderItem {
         args: Self::Args<'_>,
     ) -> binrw::prelude::BinResult<()> {
         match self {
-            HeaderItem::HeaderStart => SpStr::new("HEADER_START").write_options(writer, endian, args),
+            HeaderItem::HeaderStart => {
+                SpStr::new("HEADER_START").write_options(writer, endian, args)
+            }
             HeaderItem::HeaderEnd => SpStr::new("HEADER_END").write_options(writer, endian, args),
-            HeaderItem::IntItem(ref x) => x.write_options(writer, endian, args),
-            HeaderItem::StringItem(ref x) => x.write_options(writer, endian, args),
-            HeaderItem::DoubleItem(ref x) => x.write_options(writer, endian, args),
+            HeaderItem::IntItem(x) => x.write_options(writer, endian, args),
+            HeaderItem::StringItem(x) => x.write_options(writer, endian, args),
+            HeaderItem::DoubleItem(x) => x.write_options(writer, endian, args),
         }
     }
 }
@@ -156,45 +156,44 @@ impl BinRead for Header {
     type Args<'a> = ();
 
     fn read_options<R: Read + std::io::prelude::Seek>(
-            reader: &mut R,
-            endian: binrw::Endian,
-            args: Self::Args<'_>,
-        ) -> binrw::prelude::BinResult<Self> {
-        match HeaderItem::read_options(reader, endian, args)?{
-            HeaderItem::HeaderStart=>(),
-            _=>panic!()
+        reader: &mut R,
+        endian: binrw::Endian,
+        args: Self::Args<'_>,
+    ) -> binrw::prelude::BinResult<Self> {
+        match HeaderItem::read_options(reader, endian, args)? {
+            HeaderItem::HeaderStart => (),
+            _ => panic!(),
         }
 
-        let mut items=vec![];
-        loop{
-            let item=HeaderItem::read_options(reader, endian, args)?;
-            if let HeaderItem::HeaderEnd=item{
+        let mut items = vec![];
+        loop {
+            let item = HeaderItem::read_options(reader, endian, args)?;
+            if let HeaderItem::HeaderEnd = item {
                 break;
-            }else{
+            } else {
                 items.push(item);
             }
         }
 
-        Ok(Self{
-            start:HeaderItem::HeaderStart,
+        Ok(Self {
+            start: HeaderItem::HeaderStart,
             items,
-            end:HeaderItem::HeaderEnd
+            end: HeaderItem::HeaderEnd,
         })
     }
 }
 
-
-impl BinWrite for Header{
+impl BinWrite for Header {
     type Args<'a> = ();
 
     fn write_options<W: Write + std::io::prelude::Seek>(
-            &self,
-            writer: &mut W,
-            endian: binrw::Endian,
-            args: Self::Args<'_>,
-        ) -> binrw::prelude::BinResult<()> {
+        &self,
+        writer: &mut W,
+        endian: binrw::Endian,
+        args: Self::Args<'_>,
+    ) -> binrw::prelude::BinResult<()> {
         HeaderItem::HeaderStart.write_options(writer, endian, args)?;
-        for x in &self.items{
+        for x in &self.items {
             x.write_options(writer, endian, args)?;
         }
         HeaderItem::HeaderEnd.write_options(writer, endian, args)
@@ -245,10 +244,16 @@ impl Header {
         header.push_item(HeaderItem::IntItem(KvPair::new("machine_id", 0)));
         header.push_item(HeaderItem::IntItem(KvPair::new("telescope_id", 0)));
         header.push_item(HeaderItem::IntItem(KvPair::new("data_type", 1)));
-        header.push_item(HeaderItem::DoubleItem(KvPair::new("fch1", <f64 as NumCast>::from(fch1).unwrap())));
-        header.push_item(HeaderItem::DoubleItem(KvPair::new("foff", <f64 as NumCast>::from(foff).unwrap())));
+        header.push_item(HeaderItem::DoubleItem(KvPair::new(
+            "fch1",
+            <f64 as NumCast>::from(fch1).unwrap(),
+        )));
+        header.push_item(HeaderItem::DoubleItem(KvPair::new(
+            "foff",
+            <f64 as NumCast>::from(foff).unwrap(),
+        )));
         header.push_item(HeaderItem::IntItem(KvPair::new("nchans", nch as u32)));
-        header.push_item(HeaderItem::IntItem(KvPair::new("barycentric", 1 as u32)));
+        header.push_item(HeaderItem::IntItem(KvPair::new("barycentric", 1_u32)));
         header.push_item(HeaderItem::IntItem(KvPair::new("nbits", 32)));
         header.push_item(HeaderItem::DoubleItem(KvPair::new("az_start", 0.0)));
         header.push_item(HeaderItem::DoubleItem(KvPair::new("za_start", 0.0)));
@@ -266,10 +271,10 @@ impl Header {
 
     pub fn nifs(&self) -> usize {
         for i in &self.items {
-            if let HeaderItem::IntItem(x) = i {
-                if String::from_utf8(x.key.content.clone()).unwrap() == "nifs" {
-                    return x.value as usize;
-                }
+            if let HeaderItem::IntItem(x) = i
+                && String::from_utf8(x.key.content.clone()).unwrap() == "nifs"
+            {
+                return x.value as usize;
             }
         }
         1
@@ -277,10 +282,10 @@ impl Header {
 
     pub fn nchans(&self) -> usize {
         for i in &self.items {
-            if let HeaderItem::IntItem(x) = i {
-                if String::from_utf8(x.key.content.clone()).unwrap() == "nchans" {
-                    return x.value as usize;
-                }
+            if let HeaderItem::IntItem(x) = i
+                && String::from_utf8(x.key.content.clone()).unwrap() == "nchans"
+            {
+                return x.value as usize;
             }
         }
         unreachable!()
@@ -288,10 +293,10 @@ impl Header {
 
     pub fn tsamp(&self) -> f64 {
         for i in &self.items {
-            if let HeaderItem::DoubleItem(x) = i {
-                if String::from_utf8(x.key.content.clone()).unwrap() == "tsamp" {
-                    return x.value as f64;
-                }
+            if let HeaderItem::DoubleItem(x) = i
+                && String::from_utf8(x.key.content.clone()).unwrap() == "tsamp"
+            {
+                return x.value;
             }
         }
         unreachable!()
@@ -299,11 +304,11 @@ impl Header {
 
     pub fn set_tsamp(&mut self, tsamp: f64) {
         for i in &mut self.items {
-            if let HeaderItem::DoubleItem(x) = i {
-                if String::from_utf8(x.key.content.clone()).unwrap() == "tsamp" {
-                    x.value = tsamp;
-                    return;
-                }
+            if let HeaderItem::DoubleItem(x) = i
+                && String::from_utf8(x.key.content.clone()).unwrap() == "tsamp"
+            {
+                x.value = tsamp;
+                return;
             }
         }
         unreachable!()
@@ -311,10 +316,10 @@ impl Header {
 
     pub fn nbits(&self) -> usize {
         for i in &self.items {
-            if let HeaderItem::IntItem(x) = i {
-                if String::from_utf8(x.key.content.clone()).unwrap() == "nbits" {
-                    return x.value as usize;
-                }
+            if let HeaderItem::IntItem(x) = i
+                && String::from_utf8(x.key.content.clone()).unwrap() == "nbits"
+            {
+                return x.value as usize;
             }
         }
         unreachable!()

@@ -1,8 +1,8 @@
 use clap::Parser;
 
 use egui::ViewportBuilder;
-use image::{imageops::FilterType::Nearest, DynamicImage, RgbImage};
-use ndarray::{s, Array1, Array2};
+use image::{DynamicImage, RgbImage, imageops::FilterType::Nearest};
+use ndarray::{Array1, Array2, s};
 
 //use rayon::prelude::*;
 
@@ -10,11 +10,14 @@ use num::complex::Complex;
 use soapy_spec_acc::{daq::run_daq, utils::write_data};
 use soapysdr::{Device, Direction};
 use std::{
-    fs::{File, OpenOptions},
+    fs::OpenOptions,
     sync::{Arc, Mutex},
 };
 
-use eframe::{egui::{self, CentralPanel, Context, Key, Slider, TopBottomPanel, Vec2, Visuals}, Renderer};
+use eframe::{
+    Renderer,
+    egui::{self, CentralPanel, Context, Key, Slider, TopBottomPanel, Vec2, Visuals},
+};
 use egui_plotter::EguiBackend;
 use plotters::prelude::*;
 
@@ -124,7 +127,7 @@ fn main() {
     let device = Device::new("driver=airspy").unwrap();
 
     for g in device.list_gains(Direction::Rx, 0).unwrap() {
-        println!("{}", g);
+        println!("{g}");
     }
 
     device.set_antenna(Direction::Rx, 0, "RX").unwrap();
@@ -190,26 +193,16 @@ fn main() {
                     .unwrap();
                 write_data(&mut outfile, averaged.as_slice().unwrap());
             }
-            
+
             filtered_result = filtered_result * args.k + &averaged * (1 as Ftype - args.k);
 
-            assert!(filtered_result.iter().all(|&x|{
-                x>0.0
-            }));
-            
+            assert!(filtered_result.iter().all(|&x| { x > 0.0 }));
+
             waterfall_buf_tmp
                 .slice_mut(s![..-1, ..])
                 .assign(&waterfall_buf.slice(s![1.., ..]));
             waterfall_buf_tmp.slice_mut(s![-1, ..]).assign(&averaged);
             std::mem::swap(&mut waterfall_buf, &mut waterfall_buf_tmp);
-
-            let (min_value, max_value) = averaged
-            .iter()
-            .fold((1e99, -1e99), |a, &v| {
-                let v = v as f64;
-                (if a.0 < v { a.0 } else { v }, if a.1 > v { a.1 } else { v })
-            });
-            
 
             {
                 if let Ok(mut g) = spectrum_buf.try_lock() {
@@ -227,29 +220,43 @@ fn main() {
     });
 
     let running1 = running.clone();
-    let _th_repaint = std::thread::spawn(move || loop {
-        if !*running1.lock().unwrap() {
-            return;
-        }
-        if let Err(_) = rx_repaint.recv() {
-            println!("Data source distoryed")
-        }
-        let ctx2 = ctx1.lock().unwrap();
-        if let Some(ref x) = *ctx2 {
-            x.request_repaint();
+    let _th_repaint = std::thread::spawn(move || {
+        loop {
+            if !*running1.lock().unwrap() {
+                return;
+            }
+            if rx_repaint.recv().is_err() {
+                println!("Data source distoryed")
+            }
+            let ctx2 = ctx1.lock().unwrap();
+            if let Some(ref x) = *ctx2 {
+                x.request_repaint();
+            }
         }
     });
 
     let ctx1 = Arc::clone(&ctx);
-    let mut native_options = eframe::NativeOptions::default();
-    //native_options.initial_window_size = Some(Vec2::new(950.0, 600.0));
-    native_options.viewport=ViewportBuilder::default().with_inner_size(Vec2::new(950.0, 600.0));
-    //native_options.min_window_size = native_options.initial_window_size.clone();
-    native_options.renderer=match args.renderer.as_str(){
-        "glow"=>{Renderer::Glow},
-        "wgpu"=>{Renderer::Wgpu},
-        _=>panic!("renderer can be either wgpu or glow")
+
+    let native_options = eframe::NativeOptions {
+        viewport: ViewportBuilder::default().with_inner_size(Vec2::new(950.0, 600.0)),
+        renderer: match args.renderer.as_str() {
+            "glow" => Renderer::Glow,
+            "wgpu" => Renderer::Wgpu,
+            _ => panic!("renderer can be either wgpu or glow"),
+        },
+        ..Default::default()
     };
+
+    /*
+    let mut native_options = eframe::NativeOptions::default();
+
+    native_options.viewport = ViewportBuilder::default().with_inner_size(Vec2::new(950.0, 600.0));
+
+    native_options.renderer = match args.renderer.as_str() {
+        "glow" => Renderer::Glow,
+        "wgpu" => Renderer::Wgpu,
+        _ => panic!("renderer can be either wgpu or glow"),
+    };*/
 
     let wimg = waterfall_img_buf.clone();
     let sbuf = spectrum_buf.clone();
@@ -272,14 +279,14 @@ fn main() {
         "Waterfall",
         native_options,
         Box::new(move |cc| Ok(Box::new(PlotWindow::new(cc, ctx1, wimg, sbuf, state)))),
-    ){
-        Ok(_)=>{},
-        Err(e)=>{
-            println!("{}", e);
+    ) {
+        Ok(_) => {}
+        Err(e) => {
+            println!("{e}");
             panic!();
         }
     }
-    
+
     println!("exit!");
     *running.lock().unwrap() = false;
     th_display.join().unwrap();
@@ -338,7 +345,7 @@ impl eframe::App for PlotWindow {
                 let v = v as f64;
                 (if a.0 < v { a.0 } else { v }, if a.1 > v { a.1 } else { v })
             });
-        
+
         if min_value == max_value || min_value == 0.0 {
             CentralPanel::default().show(ctx, |ui| {
                 ui.centered_and_justified(|ui| {
@@ -567,7 +574,7 @@ impl eframe::App for PlotWindow {
                 let f = f + df;
                 self.state.freq = f;
                 self.state.floor = None;
-                println!("freq changed to {}", f);
+                println!("freq changed to {f}");
             }
         });
     }

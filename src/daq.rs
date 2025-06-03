@@ -18,7 +18,7 @@ pub fn run_daq(
     {
         Ok(())=>{println!("activated")}
         Err(e)=>{
-            println!("{:?}", e);
+            println!("{e:?}");
         }
     }
 
@@ -41,9 +41,9 @@ pub fn run_daq(
                 .read(&mut [&mut buf], 1_000_000)
                 .expect("read failed");
             buf.resize(len, Complex::default());
-            let sigma1=(buf.iter().map(|x|{
+            let sigma1=buf.iter().map(|x|{
                 x.norm_sqr()
-            }).reduce(|a,b|{a+b}).unwrap()/buf.len() as f32);
+            }).reduce(|a,b|{a+b}).unwrap()/buf.len() as f32;
             let k=0.999;
             if let Some(ref mut x)=sigma{
                 *x=*x*k+(1.0-k)*sigma1;
