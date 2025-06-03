@@ -1,5 +1,6 @@
 use clap::Parser;
 
+use egui::ViewportBuilder;
 use image::{imageops::FilterType::Nearest, DynamicImage, RgbImage};
 use ndarray::{s, Array1, Array2};
 
@@ -170,8 +171,8 @@ fn main() {
     let th_display = std::thread::spawn(move || {
         let spectrum_buf = sbuf;
 
-        let mut waterfall_buf = Array2::<f32>::zeros((args.ntime, args.nch));
-        let mut waterfall_buf_tmp = Array2::<f32>::zeros((args.ntime, args.nch));
+        let mut waterfall_buf = Array2::<f32>::ones((args.ntime, args.nch));
+        let mut waterfall_buf_tmp = Array2::<f32>::ones((args.ntime, args.nch));
         //let averaged = rx_averaged.recv().unwrap();
         //let mut filtered_result = averaged.clone();
         let mut filtered_result = Array1::<f32>::zeros(args.nch);
@@ -189,12 +190,26 @@ fn main() {
                     .unwrap();
                 write_data(&mut outfile, averaged.as_slice().unwrap());
             }
+            
             filtered_result = filtered_result * args.k + &averaged * (1 as Ftype - args.k);
+
+            assert!(filtered_result.iter().all(|&x|{
+                x>0.0
+            }));
+            
             waterfall_buf_tmp
                 .slice_mut(s![..-1, ..])
                 .assign(&waterfall_buf.slice(s![1.., ..]));
             waterfall_buf_tmp.slice_mut(s![-1, ..]).assign(&averaged);
             std::mem::swap(&mut waterfall_buf, &mut waterfall_buf_tmp);
+
+            let (min_value, max_value) = averaged
+            .iter()
+            .fold((1e99, -1e99), |a, &v| {
+                let v = v as f64;
+                (if a.0 < v { a.0 } else { v }, if a.1 > v { a.1 } else { v })
+            });
+            
 
             {
                 if let Ok(mut g) = spectrum_buf.try_lock() {
@@ -204,22 +219,6 @@ fn main() {
                 if let Ok(mut g) = wimg.try_lock() {
                     g.assign(&waterfall_buf);
                 }
-
-                //let mut waterfall_img=RgbImage::new(args.nch as u32, args.ntime as u32);
-                //let mut waterfall_img=RgbImage::from_vec(args.nch as u32, args.ntime as u32, x).unwrap();
-
-                //let mut g=wimg.lock().unwrap();
-                /*
-                                waterfall_buf.indexed_iter().for_each(|((i, j), &v)|{
-                                    let v=v as f64;
-                                    let c=colormap.get_color_normalized(v, min_value, max_value);
-                                    waterfall_img.put_pixel(j as u32, i as u32, Rgb([c.0, c.1, c.2]));
-                                });
-                */
-
-                //waterfall_img.save("./a.png");
-
-                //*wimg.lock().unwrap()=x;
             }
             if tx_repaint.is_empty() {
                 tx_repaint.send(()).unwrap();
@@ -243,8 +242,9 @@ fn main() {
 
     let ctx1 = Arc::clone(&ctx);
     let mut native_options = eframe::NativeOptions::default();
-    native_options.initial_window_size = Some(Vec2::new(950.0, 600.0));
-    native_options.min_window_size = native_options.initial_window_size.clone();
+    //native_options.initial_window_size = Some(Vec2::new(950.0, 600.0));
+    native_options.viewport=ViewportBuilder::default().with_inner_size(Vec2::new(950.0, 600.0));
+    //native_options.min_window_size = native_options.initial_window_size.clone();
     native_options.renderer=match args.renderer.as_str(){
         "glow"=>{Renderer::Glow},
         "wgpu"=>{Renderer::Wgpu},
@@ -268,12 +268,18 @@ fn main() {
         floor: None,
         //outname: args.outname.clone(),
     };
-    eframe::run_native(
+    match eframe::run_native(
         "Waterfall",
         native_options,
-        Box::new(move |cc| Box::new(PlotWindow::new(cc, ctx1, wimg, sbuf, state))),
-    )
-    .unwrap();
+        Box::new(move |cc| Ok(Box::new(PlotWindow::new(cc, ctx1, wimg, sbuf, state)))),
+    ){
+        Ok(_)=>{},
+        Err(e)=>{
+            println!("{}", e);
+            panic!();
+        }
+    }
+    
     println!("exit!");
     *running.lock().unwrap() = false;
     th_display.join().unwrap();
@@ -332,7 +338,7 @@ impl eframe::App for PlotWindow {
                 let v = v as f64;
                 (if a.0 < v { a.0 } else { v }, if a.1 > v { a.1 } else { v })
             });
-
+        
         if min_value == max_value || min_value == 0.0 {
             CentralPanel::default().show(ctx, |ui| {
                 ui.centered_and_justified(|ui| {
